@@ -8,6 +8,7 @@ const {
   nativeImage,
   dialog,
   shell,
+  globalShortcut,
 } = require("electron");
 const path = require("path");
 const https = require("https");
@@ -16,9 +17,16 @@ const fs = require("fs");
 const os = require("os");
 
 // ── 常量 ─────────────────────────────────────────────────────────────────────
-// 自动检测 Next.js 端口（3000 优先，3001 备用）
-const WEB_APP_PORTS = [3000, 3001, 3002];
-let WEB_APP_URL = "http://localhost:3000";
+// 自动检测 Next.js 端口（可用环境变量覆盖）
+const DEFAULT_WEB_APP_PORTS = [3000, 3001, 3002];
+const WEB_APP_PORTS = (process.env.AMICO_WEB_APP_PORTS || "")
+  .split(",")
+  .map((p) => Number.parseInt(p.trim(), 10))
+  .filter((p) => Number.isInteger(p) && p > 0)
+  .slice(0, 10);
+if (WEB_APP_PORTS.length === 0) WEB_APP_PORTS.push(...DEFAULT_WEB_APP_PORTS);
+const FORCED_WEB_APP_URL = (process.env.AMICO_WEB_APP_URL || "").trim();
+let WEB_APP_URL = FORCED_WEB_APP_URL || `http://localhost:${WEB_APP_PORTS[0]}`;
 const PET_WIDTH = 320;
 const PET_HEIGHT = 520;
 const AMICO_DIR = path.join(os.homedir(), ".amico");
@@ -49,11 +57,16 @@ function detectNextJsPort() {
   });
 }
 
+async function resolveWebAppUrl() {
+  if (FORCED_WEB_APP_URL) return FORCED_WEB_APP_URL;
+  const port = await detectNextJsPort();
+  return `http://localhost:${port}`;
+}
+
 // ── 主窗口（Next.js Web App）────────────────────────────────────────────────
 async function createMainWindow() {
-  // 检测可用端口
-  const port = await detectNextJsPort();
-  WEB_APP_URL = `http://localhost:${port}`;
+  // 解析 Web App URL（支持强制指定）
+  WEB_APP_URL = await resolveWebAppUrl();
   console.log("[main] 使用 Web App URL:", WEB_APP_URL);
 
   mainWindow = new BrowserWindow({
@@ -109,6 +122,23 @@ function createPetWindow() {
   petWindow.loadFile(path.join(__dirname, "pet-window", "index.html"));
 
   petWindow.on("closed", () => { petWindow = null; });
+}
+
+function showPetWindow() {
+  if (!petWindow || petWindow.isDestroyed()) {
+    createPetWindow();
+  }
+  try {
+    petWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  } catch {}
+  petWindow.showInactive();
+  petWindow.setAlwaysOnTop(true, "screen-saver");
+  petWindow.moveTop();
+  setTimeout(() => {
+    if (petWindow && !petWindow.isDestroyed()) {
+      petWindow.setAlwaysOnTop(true, "floating");
+    }
+  }, 1500);
 }
 
 // ── 系统托盘 ─────────────────────────────────────────────────────────────────
@@ -192,17 +222,75 @@ ipcMain.handle("load-pet", async (event, relativeUrl) => {
     if (petWindow.webContents.isLoading()) {
       petWindow.webContents.once("did-finish-load", () => {
         petWindow.webContents.send("load-glb", `file://${localPath}`);
-        petWindow.show();
+        showPetWindow();
       });
     } else {
       petWindow.webContents.send("load-glb", `file://${localPath}`);
-      petWindow.show();
+      showPetWindow();
     }
 
     return { success: true };
   } catch (err) {
     console.error("[main] load-pet error:", err);
     return { success: false, error: err.message };
+  }
+});
+
+// Web App → 主进程：批量动画加载（新版本接口）
+ipcMain.handle("load-pet-with-animations", async (event, payload) => {
+  const { animUrls, currentPreset } = payload;
+
+  // 按优先级选一个可下载的远程 URL（跳过 blob: URL）
+  const candidates = [
+    animUrls?.[currentPreset],
+    animUrls?.idle,
+    ...Object.values(animUrls || {}),
+  ].filter(Boolean);
+
+  const remoteUrl = candidates.find((u) => typeof u === "string" && !u.startsWith("blob:"));
+  if (!remoteUrl) return { success: false, error: "No downloadable animation URL (all are local blob)" };
+
+  const fullUrl = remoteUrl.startsWith("http") ? remoteUrl : `${WEB_APP_URL}${remoteUrl}`;
+  console.log("[main] load-pet-with-animations fullUrl:", fullUrl.slice(0, 120));
+
+  try {
+    const localPath = await downloadGlb(fullUrl);
+    currentGlbPath = localPath;
+
+    if (!petWindow || petWindow.isDestroyed()) createPetWindow();
+
+    const sendGlb = () => {
+      console.log("[main] sending load-glb to pet window");
+      petWindow.webContents.send("load-glb", `file://${localPath}`);
+      showPetWindow();
+    };
+
+    if (petWindow.webContents.isLoading()) {
+      petWindow.webContents.once("did-finish-load", () => setTimeout(sendGlb, 800));
+    } else {
+      sendGlb();
+    }
+
+    return { success: true };
+  } catch (err) {
+    console.error("[main] load-pet-with-animations error:", err);
+    return { success: false, error: err.message };
+  }
+});
+
+// Web App → 主进程：删除角色数据
+ipcMain.handle("delete-character-data", async (event, payload) => {
+  console.log("[main] delete-character-data:", payload?.characterId);
+  return { success: true };
+});
+
+ipcMain.on("show-pet", () => {
+  showPetWindow();
+});
+
+ipcMain.on("hide-pet", () => {
+  if (petWindow && !petWindow.isDestroyed()) {
+    petWindow.hide();
   }
 });
 
@@ -248,6 +336,16 @@ app.whenReady().then(() => {
   createPetWindow();
   // createTray(); // 托盘图标（需要图标文件，暂时注释）
 
+  // 快捷键：显示/隐藏桌宠
+  globalShortcut.register("CommandOrControl+Shift+A", () => {
+    if (!petWindow || petWindow.isDestroyed()) {
+      showPetWindow();
+      return;
+    }
+    if (petWindow.isVisible()) petWindow.hide();
+    else showPetWindow();
+  });
+
   // 尝试恢复上次的宠物
   const savedGlb = path.join(AMICO_DIR, "current_pet.glb");
   if (fs.existsSync(savedGlb)) {
@@ -264,6 +362,10 @@ app.whenReady().then(() => {
 app.on("window-all-closed", () => {
   // macOS: 保持应用运行（通过托盘访问）
   if (process.platform !== "darwin") app.quit();
+});
+
+app.on("will-quit", () => {
+  globalShortcut.unregisterAll();
 });
 
 // 阻止创建额外窗口

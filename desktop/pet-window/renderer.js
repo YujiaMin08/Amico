@@ -1,9 +1,9 @@
 // ── Three.js 桌宠渲染器 ────────────────────────────────────────────────────
 // 透明窗口 + GLB 加载 + 动画播放 + 鼠标穿透检测 + 拖动
 
-import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
-import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js";
-import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js";
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 // ── DOM ───────────────────────────────────────────────────────────────────────
 const canvas = document.getElementById("pet-canvas");
@@ -31,7 +31,7 @@ const camera = new THREE.PerspectiveCamera(
   0.1,
   100
 );
-camera.position.set(0, 1.2, 5);
+camera.position.set(0, 1.0, 4.5);
 
 // 简单光照
 scene.add(new THREE.AmbientLight(0xffffff, 1.4));
@@ -85,12 +85,12 @@ function loadGlb(url) {
       box.getCenter(center);
 
       const maxDim = Math.max(size.x, size.y, size.z);
-      const scale = 2.2 / maxDim;
+      const scale = 1.6 / maxDim;
       model.scale.setScalar(scale);
 
       // 居中并贴近底部
       model.position.sub(center.multiplyScalar(scale));
-      model.position.y -= (size.y * scale) / 2 - 0.1;
+      model.position.y -= (size.y * scale) / 2 - 0.05;
 
       scene.add(model);
       currentModel = model;

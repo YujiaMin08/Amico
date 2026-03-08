@@ -1040,9 +1040,18 @@ export default function Home() {
               onRecreate={() => { resetAll(); setAppState("upload"); }}
               onConfirm={async () => {
                 if (typeof window !== "undefined" && window.electronAPI?.isElectron && currentModelUrl) {
-                  // 发送所有已生成的动画 URL，让 Electron 批量下载
+                  // blob: URL 无法被 desktop 下载，需要回退到 gallery 保存的远程 URL
+                  const resolvedAnimUrls: Record<string, string> = { ...animUrls };
+                  const hasBlobOnly = Object.values(resolvedAnimUrls).every((u) => u.startsWith("blob:"));
+                  if (hasBlobOnly && currentGalleryId) {
+                    const galleryItem = loadGallery().find((i) => i.id === currentGalleryId);
+                    if (galleryItem?.lastModelUrl && !galleryItem.lastModelUrl.startsWith("blob:")) {
+                      resolvedAnimUrls.idle = galleryItem.lastModelUrl;
+                    }
+                  }
+
                   const result = await window.electronAPI.loadPetWithAnimations({
-                    animUrls,
+                    animUrls: resolvedAnimUrls,
                     currentPreset: activeAnimPreset,
                     characterName: characterName.trim() || undefined,
                     characterId: currentGalleryId ?? undefined,

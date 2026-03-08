@@ -4,11 +4,11 @@
   "description": "Amico — Your AI Desktop Companion",
   "main": "main.js",
   "scripts": {
-    "start": "electron .",
-    "dev": "electron . --dev"
+    "start": "node node_modules/electron/cli.js .",
+    "dev": "node node_modules/electron/cli.js . --dev"
   },
   "dependencies": {
-    "electron": "^33.0.0"
+    "electron": "^33.4.11"
   },
   "devDependencies": {
     "electron-builder": "^24.0.0"
